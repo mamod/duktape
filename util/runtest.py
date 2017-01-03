@@ -8,6 +8,8 @@
 #  linking.
 #
 
+# FIXME: add massif test
+
 # XXX: encoding issues
 # XXX: external minifier
 # XXX: use strict support; perhaps via test metadata
