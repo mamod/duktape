@@ -144,7 +144,7 @@
 /* Slotcache is used to speeding up object property lookups without
  * caching a property value.
  */
-#define DUK_HEAP_SLOTCACHE_SIZE                           8192
+#define DUK_HEAP_SLOTCACHE_SIZE                           256
 
 /* helper to insert a (non-string) heap object into heap allocated list */
 #define DUK_HEAP_INSERT_INTO_HEAP_ALLOCATED(heap,hdr)     duk_heap_insert_into_heap_allocated((heap),(hdr))
@@ -533,8 +533,10 @@ DUK_INTERNAL void duk_heap_strtable_dump(duk_heap *heap);
 DUK_INTERNAL_DECL void duk_heap_strcache_string_remove(duk_heap *heap, duk_hstring *h);
 DUK_INTERNAL_DECL duk_uint_fast32_t duk_heap_strcache_offset_char2byte(duk_hthread *thr, duk_hstring *h, duk_uint_fast32_t char_offset);
 
+/* FIXME: duk_small_uint_t? */
 DUK_INTERNAL_DECL duk_uint32_t duk_heap_slotcache_lookup(duk_heap *heap, duk_hobject *obj, duk_hstring *key);
 DUK_INTERNAL_DECL void duk_heap_slotcache_insert(duk_heap *heap, duk_hobject *obj, duk_hstring *key, duk_uint32_t slot);
+DUK_INTERNAL_DECL duk_uint32_t duk_heap_slotcache_getkey(duk_hobject *obj, duk_hstring *key);
 
 #if defined(DUK_USE_PROVIDE_DEFAULT_ALLOC_FUNCTIONS)
 DUK_INTERNAL_DECL void *duk_default_alloc_function(void *udata, duk_size_t size);
