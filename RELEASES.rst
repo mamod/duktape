@@ -2408,6 +2408,10 @@ Planned
 * Improve duk_hstring array index handling performance when
   DUK_USE_HSTRING_ARRIDX is disabled (GH-1274)
 
+* Make duk_hstring character length (clen) lazily computed to improve string
+  handling performance for the majority of strings whose .length is never
+  read (GH-FIXME)
+
 * Fix argument validation bug in typedarray .set() which would cause a segfault
   for e.g. new Float64Array(2).set(undefined) (GH-1285, GH-1286)
 
