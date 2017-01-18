@@ -189,12 +189,12 @@ DUK_INTERNAL void duk_hthread_callstack_unwind(duk_hthread *thr, duk_size_t new_
 					DUK_TVAL_SET_NULL(tv_caller);   /* no incref needed */
 					DUK_ASSERT(act->prev_caller == NULL);
 				}
-				DUK_TVAL_DECREF(thr, &tv_tmp);  /* side effects */
+				DUK_TVAL_DECREF_NORZ(thr, &tv_tmp);
 			} else {
 				h_tmp = act->prev_caller;
 				if (h_tmp) {
 					act->prev_caller = NULL;
-					DUK_HOBJECT_DECREF(thr, h_tmp);  /* side effects */
+					DUK_HOBJECT_DECREF_NORZ(thr, h_tmp);
 				}
 			}
 			act = thr->callstack + idx;  /* avoid side effects */
@@ -260,18 +260,6 @@ DUK_INTERNAL void duk_hthread_callstack_unwind(duk_hthread *thr, duk_size_t new_
 		}
 #endif
 
-		DUK_ASSERT((act->lex_env == NULL) ||
-		           ((duk_hobject_find_existing_entry_tval_ptr(thr->heap, act->lex_env, DUK_HTHREAD_STRING_INT_CALLEE(thr)) == NULL) &&
-		            (duk_hobject_find_existing_entry_tval_ptr(thr->heap, act->lex_env, DUK_HTHREAD_STRING_INT_VARMAP(thr)) == NULL) &&
-		            (duk_hobject_find_existing_entry_tval_ptr(thr->heap, act->lex_env, DUK_HTHREAD_STRING_INT_THREAD(thr)) == NULL) &&
-		            (duk_hobject_find_existing_entry_tval_ptr(thr->heap, act->lex_env, DUK_HTHREAD_STRING_INT_REGBASE(thr)) == NULL)));
-
-		DUK_ASSERT((act->var_env == NULL) ||
-		           ((duk_hobject_find_existing_entry_tval_ptr(thr->heap, act->var_env, DUK_HTHREAD_STRING_INT_CALLEE(thr)) == NULL) &&
-		            (duk_hobject_find_existing_entry_tval_ptr(thr->heap, act->var_env, DUK_HTHREAD_STRING_INT_VARMAP(thr)) == NULL) &&
-		            (duk_hobject_find_existing_entry_tval_ptr(thr->heap, act->var_env, DUK_HTHREAD_STRING_INT_THREAD(thr)) == NULL) &&
-		            (duk_hobject_find_existing_entry_tval_ptr(thr->heap, act->var_env, DUK_HTHREAD_STRING_INT_REGBASE(thr)) == NULL)));
-
 	 skip_env_close:
 
 		/*
@@ -297,7 +285,7 @@ DUK_INTERNAL void duk_hthread_callstack_unwind(duk_hthread *thr, duk_size_t new_
 #endif
 		act->var_env = NULL;
 #if defined(DUK_USE_REFERENCE_COUNTING)
-		DUK_HOBJECT_DECREF_ALLOWNULL(thr, tmp);
+		DUK_HOBJECT_DECREF_NORZ_ALLOWNULL(thr, tmp);
 		act = thr->callstack + idx;  /* avoid side effect issues */
 #endif
 
@@ -306,7 +294,7 @@ DUK_INTERNAL void duk_hthread_callstack_unwind(duk_hthread *thr, duk_size_t new_
 #endif
 		act->lex_env = NULL;
 #if defined(DUK_USE_REFERENCE_COUNTING)
-		DUK_HOBJECT_DECREF_ALLOWNULL(thr, tmp);
+		DUK_HOBJECT_DECREF_NORZ_ALLOWNULL(thr, tmp);
 		act = thr->callstack + idx;  /* avoid side effect issues */
 #endif
 
@@ -318,7 +306,7 @@ DUK_INTERNAL void duk_hthread_callstack_unwind(duk_hthread *thr, duk_size_t new_
 #endif
 		act->func = NULL;
 #if defined(DUK_USE_REFERENCE_COUNTING)
-		DUK_HOBJECT_DECREF_ALLOWNULL(thr, tmp);
+		DUK_HOBJECT_DECREF_NORZ_ALLOWNULL(thr, tmp);
 		act = thr->callstack + idx;  /* avoid side effect issues */
 		DUK_UNREF(act);
 #endif
@@ -341,6 +329,11 @@ DUK_INTERNAL void duk_hthread_callstack_unwind(duk_hthread *thr, duk_size_t new_
 	 * Also topmost activation idx_retval is garbage (not zeroed), and must
 	 * be ignored.
 	 */
+
+	/* Check for pending refzero entries, many places in the unwind
+	 * use NORZ macros.
+	 */
+	DUK_REFZERO_CHECK_SLOW(thr);
 }
 
 DUK_LOCAL DUK_COLD DUK_NOINLINE void duk__hthread_do_catchstack_grow(duk_hthread *thr) {

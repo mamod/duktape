@@ -446,6 +446,7 @@ DUK_LOCAL void duk__print_hobject(duk__dprint_state *st, duk_hobject *h) {
 		if (DUK_HOBJECT_HAS_THREAD(h)) {
 			DUK__COMMA(); duk_fb_sprintf(fb, "__thread:true");
 		}
+		/* FIXME: __hdecenv, __hobjenv */
 		if (DUK_HOBJECT_HAS_ARRAY_PART(h)) {
 			DUK__COMMA(); duk_fb_sprintf(fb, "__array_part:true");
 		}
@@ -511,6 +512,8 @@ DUK_LOCAL void duk__print_hobject(duk__dprint_state *st, duk_hobject *h) {
 		duk_fb_put_funcptr(fb, (duk_uint8_t *) &f->func, sizeof(f->func));
 		DUK__COMMA(); duk_fb_sprintf(fb, "__nargs:%ld", (long) f->nargs);
 		DUK__COMMA(); duk_fb_sprintf(fb, "__magic:%ld", (long) f->magic);
+	/* FIXME: boundfunc */
+	/* FIXME: hdecenv, hobjenv */
 #if defined(DUK_USE_BUFFEROBJECT_SUPPORT)
 	} else if (st->internal && DUK_HOBJECT_IS_BUFOBJ(h)) {
 		duk_hbufobj *b = (duk_hbufobj *) h;

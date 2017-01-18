@@ -215,3 +215,42 @@ DUK_INTERNAL duk_harray *duk_harray_alloc(duk_heap *heap, duk_uint_t hobject_fla
 
 	return res;
 }
+
+/*
+ *  Allocate a new environment
+ */
+
+DUK_INTERNAL duk_hdecenv *duk_hdecenv_alloc(duk_heap *heap, duk_uint_t hobject_flags) {
+	duk_hdecenv *res;
+
+	res = (duk_hdecenv *) DUK_ALLOC(heap, sizeof(duk_hdecenv));
+	if (DUK_UNLIKELY(res == NULL)) {
+		return NULL;
+	}
+	DUK_MEMZERO(res, sizeof(duk_hdecenv));
+
+	duk__init_object_parts(heap, &res->obj, hobject_flags);
+
+	DUK_ASSERT(res->thread == NULL);
+	DUK_ASSERT(res->varmap == NULL);
+	DUK_ASSERT(res->regbase == 0);
+
+	return res;
+}
+
+DUK_INTERNAL duk_hobjenv *duk_hobjenv_alloc(duk_heap *heap, duk_uint_t hobject_flags) {
+	duk_hobjenv *res;
+
+	res = (duk_hobjenv *) DUK_ALLOC(heap, sizeof(duk_hobjenv));
+	if (DUK_UNLIKELY(res == NULL)) {
+		return NULL;
+	}
+	DUK_MEMZERO(res, sizeof(duk_hobjenv));
+
+	duk__init_object_parts(heap, &res->obj, hobject_flags);
+
+	DUK_ASSERT(res->target == NULL);
+	DUK_TVAL_SET_UNDEFINED(&res->this_binding);
+
+	return res;
+}

@@ -492,13 +492,10 @@ objects:
     duktape: true
     bidx: true
 
-    properties:
-      - key: "\u00ffTarget"
-        value:
-          type: object
-          id: bi_global
-        attributes: ""
-        duktape: true
+    # The internal 'target' property is now part of duk_hobjenv and handled
+    # specially by RAM built-in init code.
+
+    properties: []
 
   - id: bi_object_constructor
     class: Function

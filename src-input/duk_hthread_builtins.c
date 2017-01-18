@@ -108,11 +108,15 @@ DUK_LOCAL void duk__duplicate_ram_global_object(duk_hthread *thr) {
 	 * needed so that the global scope points to the newly created RAM-based
 	 * global object.
 	 */
-	h1 = duk_push_object_helper(ctx,
-	                            DUK_HOBJECT_FLAG_EXTENSIBLE |
-	                            DUK_HOBJECT_CLASS_AS_FLAGS(DUK_HOBJECT_CLASS_OBJENV),
-	                            -1);  /* no prototype */
+	h1 = (duk_hobject *) duk_hobjenv_alloc(thr->heap,
+	                                       DUK_HOBJECT_FLAG_EXTENSIBLE |
+	                                       DUK_HOBJECT_CLASS_AS_FLAGS(DUK_HOBJECT_CLASS_OBJENV));
 	DUK_ASSERT(h1 != NULL);
+	DUK_ASSERT(DUK_HOBJECT_GET_PROTOTYPE(thr->heap, h1) == NULL);
+	duk_push_hobject(ctx, h1)  /*FIXME*/
+
+	/* FIXME */
+
 	duk_dup_m2(ctx);
 	duk_dup_top(ctx);  /* -> [ ... new_global new_globalenv new_global new_global ] */
 	duk_xdef_prop_stridx_short(thr, -3, DUK_STRIDX_INT_TARGET, DUK_PROPDESC_FLAGS_NONE);
@@ -290,7 +294,30 @@ DUK_INTERNAL void duk_hthread_create_builtin_objects(duk_hthread *thr) {
 			((duk_hnatfunc *) h)->magic = magic;
 		} else if (class_num == DUK_HOBJECT_CLASS_ARRAY) {
 			duk_push_array(ctx);
+		} else if (class_num == DUK_HOBJECT_CLASS_OBJENV) {
+			duk_hobjenv *env;
+			duk_hobject *global;
+
+			DUK_ASSERT(i == DUK_BIDX_GLOBAL_ENV);
+			DUK_ASSERT(DUK_BIDX_GLOBAL_ENV > DUK_BIDX_GLOBAL);
+
+			env = duk_hobjenv_alloc(thr->heap,
+	                                        DUK_HOBJECT_FLAG_EXTENSIBLE |
+	                                        DUK_HOBJECT_CLASS_AS_FLAGS(DUK_HOBJECT_CLASS_OBJENV));
+			DUK_ASSERT(env->target == NULL);
+			duk_push_hobject(ctx, (duk_hobject *) env);
+
+			global = duk_known_hobject(ctx, DUK_BIDX_GLOBAL);
+			env->target = global;
+			DUK_TVAL_SET_OBJECT(&env->this_binding, global);
+			DUK_HOBJECT_INCREF(thr, global);
+			DUK_HOBJECT_INCREF(thr, global);
+
+			/* FIXME: duk_push_hobjenv */
+			/* FIXME: ROM built-ins */
 		} else {
+			DUK_ASSERT(class_num != DUK_HOBJECT_CLASS_DECENV);
+
 			(void) duk_push_object_helper(ctx,
 			                              DUK_HOBJECT_FLAG_EXTENSIBLE,
 			                              -1);  /* no prototype or class yet */

@@ -229,7 +229,7 @@ void duk_js_push_closure(duk_hthread *thr,
 #if defined(DUK_USE_FUNC_NAME_PROPERTY)
 		if (DUK_HOBJECT_HAS_NAMEBINDING(&fun_clos->obj)) {
 			duk_hobject *proto;
-			duk_hobject *new_env;
+			duk_hdecenv *new_env;
 
 			/*
 			 *  Named function expression, name needs to be bound
@@ -247,11 +247,17 @@ void duk_js_push_closure(duk_hthread *thr,
 			}
 
 			/* -> [ ... closure template env ] */
-			new_env = duk_push_object_helper_proto(ctx,
-			                                       DUK_HOBJECT_FLAG_EXTENSIBLE |
-			                                       DUK_HOBJECT_CLASS_AS_FLAGS(DUK_HOBJECT_CLASS_DECENV),
-			                                       proto);
+			new_env = duk_hdecenv_alloc(thr->heap, 
+			                            DUK_HOBJECT_FLAG_EXTENSIBLE |
+			                            DUK_HOBJECT_CLASS_AS_FLAGS(DUK_HOBJECT_CLASS_DECENV));
 			DUK_ASSERT(new_env != NULL);
+			duk_push_hobject(ctx, (duk_hobject *) new_env);
+
+			DUK_ASSERT(DUK_HOBJECT_GET_PROTOTYPE(thr->heap, (duk_hobject *) new_env) == NULL);
+			DUK_HOBJECT_SET_PROTOTYPE(thr->heap, (duk_hobject *) new_env, proto);
+			DUK_HOBJECT_INCREF_ALLOWNULL(thr, proto);
+
+			DUK_ASSERT(new_env->thread == NULL);  /* Closed. */
 
 			/* It's important that duk_xdef_prop() is a 'raw define' so that any
 			 * properties in an ancestor are never an issue (they should never be
@@ -270,10 +276,10 @@ void duk_js_push_closure(duk_hthread *thr,
 
 			/* [ ... closure template env ] */
 
-			DUK_HCOMPFUNC_SET_LEXENV(thr->heap, fun_clos, new_env);
-			DUK_HCOMPFUNC_SET_VARENV(thr->heap, fun_clos, new_env);
-			DUK_HOBJECT_INCREF(thr, new_env);
-			DUK_HOBJECT_INCREF(thr, new_env);
+			DUK_HCOMPFUNC_SET_LEXENV(thr->heap, fun_clos, (duk_hobject *) new_env);
+			DUK_HCOMPFUNC_SET_VARENV(thr->heap, fun_clos, (duk_hobject *) new_env);
+			DUK_HOBJECT_INCREF(thr, (duk_hobject *) new_env);
+			DUK_HOBJECT_INCREF(thr, (duk_hobject *) new_env);
 			duk_pop(ctx);
 
 			/* [ ... closure template ] */
@@ -495,10 +501,11 @@ duk_hobject *duk_create_activation_environment_record(duk_hthread *thr,
                                                       duk_hobject *func,
                                                       duk_size_t idx_bottom) {
 	duk_context *ctx = (duk_context *) thr;
-	duk_hobject *env;
+	duk_hdecenv *env;
 	duk_hobject *parent;
 	duk_hcompfunc *f;
 
+	DUK_ASSERT(ctx != NULL);
 	DUK_ASSERT(thr != NULL);
 	DUK_ASSERT(func != NULL);
 
@@ -508,25 +515,44 @@ duk_hobject *duk_create_activation_environment_record(duk_hthread *thr,
 		parent = thr->builtins[DUK_BIDX_GLOBAL_ENV];
 	}
 
-	(void) duk_push_object_helper(ctx,
-	                              DUK_HOBJECT_FLAG_EXTENSIBLE |
-	                              DUK_HOBJECT_CLASS_AS_FLAGS(DUK_HOBJECT_CLASS_DECENV),
-	                              -1);  /* no prototype, updated below */
-	env = duk_known_hobject(ctx, -1);
-	DUK_HOBJECT_SET_PROTOTYPE_UPDREF(thr, env, parent);  /* parent env is the prototype */
+	env = duk_hdecenv_alloc(thr->heap, 
+	                        DUK_HOBJECT_FLAG_EXTENSIBLE |
+	                        DUK_HOBJECT_CLASS_AS_FLAGS(DUK_HOBJECT_CLASS_DECENV));
+	DUK_ASSERT(env != NULL);
+	duk_push_hobject(ctx, (duk_hobject *) env);  /* FIXME */
+
+	DUK_ASSERT(DUK_HOBJECT_GET_PROTOTYPE(thr->heap, (duk_hobject *) env) == NULL);
+	DUK_HOBJECT_SET_PROTOTYPE(thr->heap, (duk_hobject *) env, parent);
+	DUK_HOBJECT_INCREF_ALLOWNULL(thr, parent);  /* parent env is the prototype */
 
 	/* open scope information, for compiled functions only */
 
+	DUK_ASSERT(env->thread == NULL);
+	DUK_ASSERT(env->varmap == NULL);
+	DUK_ASSERT(env->regbase == 0);
 	if (DUK_HOBJECT_IS_COMPFUNC(func)) {
-		duk_push_hthread(ctx, thr);
-		duk_xdef_prop_stridx_short_wec(ctx, -2, DUK_STRIDX_INT_THREAD);
-		duk_push_hobject(ctx, func);
-		duk_xdef_prop_stridx_short_wec(ctx, -2, DUK_STRIDX_INT_CALLEE);
-		duk_push_size_t(ctx, idx_bottom);
-		duk_xdef_prop_stridx_short_wec(ctx, -2, DUK_STRIDX_INT_REGBASE);
+		duk_hobject *varmap;
+		duk_tval *tv;
+
+		env->regbase = idx_bottom;
+
+		tv = duk_hobject_find_existing_entry_tval_ptr(thr->heap, func, DUK_HTHREAD_STRING_INT_VARMAP(thr));
+		if (tv != NULL) {
+			DUK_ASSERT(DUK_TVAL_IS_OBJECT(tv));
+			varmap = DUK_TVAL_GET_OBJECT(tv);
+			DUK_ASSERT(varmap != NULL);
+			env->varmap = varmap;
+			DUK_HOBJECT_INCREF(thr, varmap);
+			env->thread = thr;
+			DUK_HTHREAD_INCREF(thr, thr);
+		} else {
+			/* If function has no _Varmap, leave the environment closed. */
+			DUK_ASSERT(env->thread == NULL);
+			DUK_ASSERT(env->varmap == NULL);
+		}
 	}
 
-	return env;
+	return (duk_hobject *) env;
 }
 
 DUK_INTERNAL
@@ -588,55 +614,37 @@ void duk_js_init_activation_environment_records_delayed(duk_hthread *thr,
 DUK_INTERNAL void duk_js_close_environment_record(duk_hthread *thr, duk_hobject *env, duk_hobject *func, duk_size_t regbase) {
 	duk_context *ctx = (duk_context *) thr;
 	duk_uint_fast32_t i;
+	duk_hobject *varmap;
+
+	/* FIXME: 'func' is not needed any longer */
 
 	DUK_ASSERT(thr != NULL);
 	DUK_ASSERT(env != NULL);
 	/* func is NULL for lightfuncs */
 
-	if (!DUK_HOBJECT_IS_DECENV(env) || DUK_HOBJECT_HAS_ENVRECCLOSED(env)) {
-		DUK_DDD(DUK_DDDPRINT("environment record not a declarative record, "
-		                     "or already closed: %!iO",
+	if (!DUK_HOBJECT_IS_DECENV(env)) {
+		DUK_D(DUK_DPRINT("environment record not a declarative record: %!iO",
 		                     (duk_heaphdr *) env));
 		return;
 	}
 
-	DUK_DDD(DUK_DDDPRINT("closing environment record: %!iO, func: %!iO, regbase: %ld",
+	DUK_D(DUK_DPRINT("closing environment record: %!iO, func: %!iO, regbase: %ld",
 	                     (duk_heaphdr *) env, (duk_heaphdr *) func, (long) regbase));
 
-	duk_push_hobject(ctx, env);
+	/* FIXME: check that 'env' is always reachable */
 
-	/* assertions: env must be closed in the same thread as where it runs */
-#if defined(DUK_USE_ASSERTIONS)
-	{
-		/* [... env] */
-
-		if (duk_get_prop_stridx_short(ctx, -1, DUK_STRIDX_INT_CALLEE)) {
-			DUK_ASSERT(duk_is_object(ctx, -1));
-			DUK_ASSERT(duk_get_hobject(ctx, -1) == (duk_hobject *) func);
-		}
-		duk_pop(ctx);
-
-		if (duk_get_prop_stridx_short(ctx, -1, DUK_STRIDX_INT_THREAD)) {
-			DUK_ASSERT(duk_is_object(ctx, -1));
-			DUK_ASSERT(duk_get_hobject(ctx, -1) == (duk_hobject *) thr);
-		}
-		duk_pop(ctx);
-
-		if (duk_get_prop_stridx_short(ctx, -1, DUK_STRIDX_INT_REGBASE)) {
-			DUK_ASSERT(duk_is_number(ctx, -1));
-			DUK_ASSERT(duk_get_number(ctx, -1) == (double) regbase);
-		}
-		duk_pop(ctx);
-
-		/* [... env] */
-	}
-#endif
-
-	if (func != NULL && DUK_HOBJECT_IS_COMPFUNC(func)) {
-		duk_hobject *varmap;
+	varmap = ((duk_hdecenv *) env)->varmap;
+	if (varmap != NULL) {
 		duk_hstring *key;
 		duk_tval *tv;
 		duk_uint_t regnum;
+
+		DUK_ASSERT(((duk_hdecenv *) env)->thread != NULL);
+		DUK_ASSERT(func != NULL && DUK_HOBJECT_IS_COMPFUNC(func));
+
+		/* assertions: env must be closed in the same thread as where it runs */
+		DUK_ASSERT(((duk_hdecenv *) env)->thread == thr);
+		DUK_ASSERT(((duk_hdecenv *) env)->regbase == regbase);
 
 		/* XXX: additional conditions when to close variables? we don't want to do it
 		 * unless the environment may have "escaped" (referenced in a function closure).
@@ -653,30 +661,16 @@ DUK_INTERNAL void duk_js_close_environment_record(duk_hthread *thr, duk_hobject 
 		 *  - having correct value types
 		 */
 
-		/* [... env] */
-
-		if (!duk_get_prop_stridx_short(ctx, -1, DUK_STRIDX_INT_CALLEE)) {
-			DUK_DDD(DUK_DDDPRINT("env has no callee property, nothing to close; re-delete the control properties just in case"));
-			duk_pop(ctx);
-			goto skip_varmap;
-		}
-
-		/* [... env callee] */
-
-		if (!duk_get_prop_stridx_short(ctx, -1, DUK_STRIDX_INT_VARMAP)) {
-			DUK_DDD(DUK_DDDPRINT("callee has no varmap property, nothing to close; delete the control properties"));
-			duk_pop_2(ctx);
-			goto skip_varmap;
-		}
-		varmap = duk_require_hobject(ctx, -1);
-		DUK_ASSERT(varmap != NULL);
-
 		DUK_DDD(DUK_DDDPRINT("varmap: %!O", (duk_heaphdr *) varmap));
-
-		/* [... env callee varmap] */
 
 		DUK_DDD(DUK_DDDPRINT("copying bound register values, %ld bound regs", (long) DUK_HOBJECT_GET_ENEXT(varmap)));
 
+		/* Copy over current variable values from value stack to the
+		 * environment record.  The scope object is empty but may
+		 * inherit from another scope which has conflicting names.
+		 */
+
+		/* FIXME: do this using a once allocated entry area, no side effects */
 		for (i = 0; i < (duk_uint_fast32_t) DUK_HOBJECT_GET_ENEXT(varmap); i++) {
 			key = DUK_HOBJECT_E_GET_KEY(thr->heap, varmap, i);
 			DUK_ASSERT(key != NULL);   /* assume keys are compacted */
@@ -685,42 +679,34 @@ DUK_INTERNAL void duk_js_close_environment_record(duk_hthread *thr, duk_hobject 
 
 			tv = DUK_HOBJECT_E_GET_VALUE_TVAL_PTR(thr->heap, varmap, i);
 			DUK_ASSERT(DUK_TVAL_IS_NUMBER(tv));  /* assume value is a number */
+			/* FIXME: fastint */
 			regnum = (duk_uint_t) DUK_TVAL_GET_NUMBER(tv);
 			DUK_ASSERT_DISABLE(regnum >= 0);  /* unsigned */
 			DUK_ASSERT(regnum < ((duk_hcompfunc *) func)->nregs);  /* regnum is sane */
 			DUK_ASSERT(thr->valstack + regbase + regnum >= thr->valstack);
 			DUK_ASSERT(thr->valstack + regbase + regnum < thr->valstack_top);
 
-			/* XXX: slightly awkward */
-			duk_push_hstring(ctx, key);
+			/* If property already exists, overwrites silently.
+			 * Property is writable, but not deletable (not configurable
+			 * in terms of property attributes.
+			 */
 			duk_push_tval(ctx, thr->valstack + regbase + regnum);
-			DUK_DDD(DUK_DDDPRINT("closing identifier '%s' -> reg %ld, value %!T",
-			                     (const char *) duk_require_string(ctx, -2),
+			DUK_D(DUK_DPRINT("closing identifier %!O -> reg %ld, value %!T",
+			                     (duk_heaphdr *) key,
 			                     (long) regnum,
 			                     (duk_tval *) duk_get_tval(ctx, -1)));
-
-			/* [... env callee varmap key val] */
-
-			/* if property already exists, overwrites silently */
-			duk_xdef_prop(ctx, -5, DUK_PROPDESC_FLAGS_WE);  /* writable but not deletable */
+			duk_hobject_define_property_internal(thr, env, key, DUK_PROPDESC_FLAGS_WE);
 		}
 
-		duk_pop_2(ctx);
-
-		/* [... env] */
+		/* NULL atomically to avoid inconsistent state + side effects. */
+		DUK_HOBJECT_DECREF_NORZ(thr, ((duk_hdecenv *) env)->thread);
+		DUK_HOBJECT_DECREF_NORZ(thr, ((duk_hdecenv *) env)->varmap);
+		((duk_hdecenv *) env)->thread = NULL;
+		((duk_hdecenv *) env)->varmap = NULL;
+	} else {
+		/* already closed */
+		DUK_ASSERT(((duk_hdecenv *) env)->thread == NULL);
 	}
-
- skip_varmap:
-
-	/* [... env] */
-
-	duk_del_prop_stridx_short(ctx, -1, DUK_STRIDX_INT_CALLEE);
-	duk_del_prop_stridx_short(ctx, -1, DUK_STRIDX_INT_THREAD);
-	duk_del_prop_stridx_short(ctx, -1, DUK_STRIDX_INT_REGBASE);
-
-	duk_pop(ctx);
-
-	DUK_HOBJECT_SET_ENVRECCLOSED(env);
 
 	DUK_DDD(DUK_DDDPRINT("environment record after being closed: %!O",
 	                     (duk_heaphdr *) env));
@@ -753,12 +739,8 @@ DUK_INTERNAL void duk_js_close_environment_record(duk_hthread *thr, duk_hobject 
 DUK_LOCAL
 duk_bool_t duk__getid_open_decl_env_regs(duk_hthread *thr,
                                          duk_hstring *name,
-                                         duk_hobject *env,
+                                         duk_hdecenv *env,
                                          duk__id_lookup_result *out) {
-	duk_hthread *env_thr;
-	duk_hobject *env_func;
-	duk_size_t env_regbase;
-	duk_hobject *varmap;
 	duk_tval *tv;
 	duk_size_t reg_rel;
 	duk_size_t idx;
@@ -768,67 +750,33 @@ duk_bool_t duk__getid_open_decl_env_regs(duk_hthread *thr,
 	DUK_ASSERT(env != NULL);
 	DUK_ASSERT(out != NULL);
 
-	DUK_ASSERT(DUK_HOBJECT_IS_DECENV(env));
+	DUK_ASSERT(DUK_HOBJECT_IS_DECENV((duk_hobject *) env));
 
-	tv = duk_hobject_find_existing_entry_tval_ptr(thr->heap, env, DUK_HTHREAD_STRING_INT_CALLEE(thr));
-	if (!tv) {
-		/* env is closed, should be missing _Callee, _Thread, _Regbase */
-		DUK_ASSERT(duk_hobject_find_existing_entry_tval_ptr(thr->heap, env, DUK_HTHREAD_STRING_INT_CALLEE(thr)) == NULL);
-		DUK_ASSERT(duk_hobject_find_existing_entry_tval_ptr(thr->heap, env, DUK_HTHREAD_STRING_INT_THREAD(thr)) == NULL);
-		DUK_ASSERT(duk_hobject_find_existing_entry_tval_ptr(thr->heap, env, DUK_HTHREAD_STRING_INT_REGBASE(thr)) == NULL);
+	if (env->thread == NULL) {
+		/* already closed */
 		return 0;
 	}
+	DUK_ASSERT(env->varmap != NULL);
 
-	DUK_ASSERT(DUK_TVAL_IS_OBJECT(tv));
-	DUK_ASSERT(DUK_TVAL_GET_OBJECT(tv) != NULL);
-	DUK_ASSERT(DUK_HOBJECT_IS_COMPFUNC(DUK_TVAL_GET_OBJECT(tv)));
-	env_func = DUK_TVAL_GET_OBJECT(tv);
-	DUK_ASSERT(env_func != NULL);
-
-	tv = duk_hobject_find_existing_entry_tval_ptr(thr->heap, env_func, DUK_HTHREAD_STRING_INT_VARMAP(thr));
+	tv = duk_hobject_find_existing_entry_tval_ptr(thr->heap, env->varmap, name);
 	if (!tv) {
 		return 0;
 	}
-	DUK_ASSERT(DUK_TVAL_IS_OBJECT(tv));
-	varmap = DUK_TVAL_GET_OBJECT(tv);
-	DUK_ASSERT(varmap != NULL);
-
-	tv = duk_hobject_find_existing_entry_tval_ptr(thr->heap, varmap, name);
-	if (!tv) {
-		return 0;
-	}
+	/* FIXME: fastint */
 	DUK_ASSERT(DUK_TVAL_IS_NUMBER(tv));
 	reg_rel = (duk_size_t) DUK_TVAL_GET_NUMBER(tv);
 	DUK_ASSERT_DISABLE(reg_rel >= 0);  /* unsigned */
-	DUK_ASSERT(reg_rel < ((duk_hcompfunc *) env_func)->nregs);
 
-	tv = duk_hobject_find_existing_entry_tval_ptr(thr->heap, env, DUK_HTHREAD_STRING_INT_THREAD(thr));
-	DUK_ASSERT(tv != NULL);
-	DUK_ASSERT(DUK_TVAL_IS_OBJECT(tv));
-	DUK_ASSERT(DUK_TVAL_GET_OBJECT(tv) != NULL);
-	DUK_ASSERT(DUK_HOBJECT_IS_THREAD(DUK_TVAL_GET_OBJECT(tv)));
-	env_thr = (duk_hthread *) DUK_TVAL_GET_OBJECT(tv);
-	DUK_ASSERT(env_thr != NULL);
-
-	/* Note: env_thr != thr is quite possible and normal, so careful
-	 * with what thread is used for valstack lookup.
-	 */
-
-	tv = duk_hobject_find_existing_entry_tval_ptr(thr->heap, env, DUK_HTHREAD_STRING_INT_REGBASE(thr));
-	DUK_ASSERT(tv != NULL);
-	DUK_ASSERT(DUK_TVAL_IS_NUMBER(tv));
-	env_regbase = (duk_size_t) DUK_TVAL_GET_NUMBER(tv);
-
-	idx = env_regbase + reg_rel;
-	tv = env_thr->valstack + idx;
-	DUK_ASSERT(tv >= env_thr->valstack && tv < env_thr->valstack_end);  /* XXX: more accurate? */
+	idx = env->regbase + reg_rel;
+	tv = env->thread->valstack + idx;
+	DUK_ASSERT(tv >= env->thread->valstack && tv < env->thread->valstack_end);  /* XXX: more accurate? */
 
 	out->value = tv;
 	out->attrs = DUK_PROPDESC_FLAGS_W;  /* registers are mutable, non-deletable */
 	out->this_binding = NULL;  /* implicit this value always undefined for
 	                            * declarative environment records.
 	                            */
-	out->env = env;
+	out->env = (duk_hobject *) env;
 	out->holder = NULL;
 
 	return 1;
@@ -859,6 +807,7 @@ duk_bool_t duk__getid_activation_regs(duk_hthread *thr,
 		return 0;
 	}
 
+	/* FIXME: move varmap to struct field */
 	tv = duk_hobject_find_existing_entry_tval_ptr(thr->heap, func, DUK_HTHREAD_STRING_INT_VARMAP(thr));
 	if (!tv) {
 		return 0;
@@ -899,7 +848,6 @@ duk_bool_t duk__get_identifier_reference(duk_hthread *thr,
                                          duk_bool_t parents,
                                          duk__id_lookup_result *out) {
 	duk_tval *tv;
-	duk_tval *tv_target;
 	duk_tval tv_name;
 	duk_uint_t sanity;
 
@@ -1020,12 +968,7 @@ duk_bool_t duk__get_identifier_reference(duk_hthread *thr,
 			 *  register-bound variables.
 			 */
 
-			if (DUK_HOBJECT_HAS_ENVRECCLOSED(env)) {
-				/* already closed */
-				goto skip_regs;
-			}
-
-			if (duk__getid_open_decl_env_regs(thr, name, env, out)) {
+			if (duk__getid_open_decl_env_regs(thr, name, (duk_hdecenv *) env, out)) {
 				DUK_DDD(DUK_DDDPRINT("duk__get_identifier_reference successful: "
 				                     "name=%!O -> value=%!T, attrs=%ld, this=%!T, env=%!O, holder=%!O "
 				                     "(declarative environment record, scope open, found in regs)",
@@ -1034,7 +977,6 @@ duk_bool_t duk__get_identifier_reference(duk_hthread *thr,
 				                     (duk_heaphdr *) out->env, (duk_heaphdr *) out->holder));
 				return 1;
 			}
-		 skip_regs:
 
 			tv = duk_hobject_find_existing_entry_tval_ptr_and_attrs(thr->heap, env, name, &attrs);
 			if (tv) {
@@ -1074,10 +1016,7 @@ duk_bool_t duk__get_identifier_reference(duk_hthread *thr,
 
 			DUK_ASSERT(cl == DUK_HOBJECT_CLASS_OBJENV);
 
-			tv_target = duk_hobject_find_existing_entry_tval_ptr(thr->heap, env, DUK_HTHREAD_STRING_INT_TARGET(thr));
-			DUK_ASSERT(tv_target != NULL);
-			DUK_ASSERT(DUK_TVAL_IS_OBJECT(tv_target));
-			target = DUK_TVAL_GET_OBJECT(tv_target);
+			target = ((duk_hobjenv *) env)->target;
 			DUK_ASSERT(target != NULL);
 
 			/* Target may be a Proxy or property may be an accessor, so we must
@@ -1088,10 +1027,13 @@ duk_bool_t duk__get_identifier_reference(duk_hthread *thr,
 			 */
 
 			if (DUK_HOBJECT_HAS_EXOTIC_PROXYOBJ(target)) {
+				duk_tval tv_target_tmp;
+
 				DUK_ASSERT(name != NULL);
 				DUK_TVAL_SET_STRING(&tv_name, name);
+				DUK_TVAL_SET_OBJECT(&tv_target_tmp, target);
 
-				found = duk_hobject_hasprop(thr, tv_target, &tv_name);
+				found = duk_hobject_hasprop(thr, &tv_target_tmp, &tv_name);
 			} else {
 				/* XXX: duk_hobject_hasprop() would be correct for
 				 * non-Proxy objects too, but it is about ~20-25%
@@ -1104,8 +1046,7 @@ duk_bool_t duk__get_identifier_reference(duk_hthread *thr,
 			if (found) {
 				out->value = NULL;  /* can't get value, may be accessor */
 				out->attrs = 0;     /* irrelevant when out->value == NULL */
-				tv = duk_hobject_find_existing_entry_tval_ptr(thr->heap, env, DUK_HTHREAD_STRING_INT_THIS(thr));
-				out->this_binding = tv;  /* may be NULL */
+				out->this_binding = &((duk_hobjenv *) env)->this_binding;  /* may be NULL */
 				out->env = env;
 				out->holder = target;
 
@@ -1752,10 +1693,7 @@ duk_bool_t duk__declvar_helper(duk_hthread *thr,
 	} else {
 		DUK_ASSERT(DUK_HOBJECT_IS_OBJENV(env));
 
-		tv = duk_hobject_find_existing_entry_tval_ptr(thr->heap, env, DUK_HTHREAD_STRING_INT_TARGET(thr));
-		DUK_ASSERT(tv != NULL);
-		DUK_ASSERT(DUK_TVAL_IS_OBJECT(tv));
-		holder = DUK_TVAL_GET_OBJECT(tv);
+		holder = ((duk_hobjenv *) env)->target;
 		DUK_ASSERT(holder != NULL);
 	}
 
