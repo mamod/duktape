@@ -2408,6 +2408,9 @@ Planned
 * Improve duk_hstring array index handling performance when
   DUK_USE_HSTRING_ARRIDX is disabled (GH-1274)
 
+* Improve lexical scope handling performance by adding internal duk_hdecenv
+  and duk_hobjenv structures (previously generic objects were used) (GH-1310)
+
 * Fix argument validation bug in typedarray .set() which would cause a segfault
   for e.g. new Float64Array(2).set(undefined) (GH-1285, GH-1286)
 
